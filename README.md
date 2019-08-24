@@ -32,6 +32,10 @@ for use by `prender.c`.
 Get Nim from [here][4].  I'm using version 0.20.2, but earlier versions
 back to 0.18 should probably work.
 
+To pull in the external source dependencies under [vendor][vendor/], run: 
+
+    $ git submodule update --init --recursive
+
 ### BSD, Linux
 
 You need the development packages for both SDL 1.2 (for the original), 
