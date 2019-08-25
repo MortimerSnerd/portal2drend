@@ -183,7 +183,7 @@ proc vline(x, py1, py2, top, middle, bottom: int32) =
   let y2 = clamp(py2, 0, WH - 1)
   if y2 == y1:
     setp(y1, middle)
-  else:
+  elif y2 > y1:
     setp(y1, top)
     for y in y1+1..<y2:
       setp(y, middle)
