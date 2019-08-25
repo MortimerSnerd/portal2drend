@@ -11,6 +11,26 @@ const
   hfov = 0.73f*float32(WH)
   vfov = 0.2f*float32(WH)
 
+# Color constants, int32 ARGB pixel.  A is not used by the renderer.
+const
+  CeilingColor = 0x222222
+  CeilingTopBorder = 0x111111
+  CeilingBottomBorder = CeilingTopBorder
+
+  FloorColor = 0x0000aa
+  FloorTopBorder = 0x0000ff
+  FloorBottomBorder = FloorTopBorder
+
+  WallTopBorder = 0x000000
+  WallBottomBorder = 0x000000
+  WallBaseColor = 0x010101     # Base color that is multipled by inverse of distance from player.
+
+  # Bottom wall, wall below a sector when it is higher than our sector.
+  BottomWallTopBorder = 0x000000
+  BottomWallBottomBorder = 0x000000
+  BottomWallBaseColor = 0x000700   # Base color that multiplied by inverse of distance from player.
+
+
 type
   Sector = object
     floor, ceil: float32
@@ -312,9 +332,9 @@ proc DrawScreen(justOneSector = false) =
         let cyb = clamp(yb, ytop[x], ybottom[x])
 
         # Render ceiling: everything above this sector's ceiling height. 
-        vline(x, ytop[x], cya-1, 0x111111, 0x222222, 0x11111)
+        vline(x, ytop[x], cya-1, CeilingTopBorder, CeilingColor, CeilingBottomBorder)
         # Render floor: everything below this sector's floor height. 
-        vline(x, cyb+1, ybottom[x], 0x0000ff, 0x0000aa, 0x0000ff)
+        vline(x, cyb+1, ybottom[x], FloorTopBorder, FloorColor, FloorBottomBorder)
 
         # Is there another sector behind this edge? 
         if neighbor >= 0:
@@ -324,17 +344,17 @@ proc DrawScreen(justOneSector = false) =
           let nyb = (x - x1) * (ny2b - ny1b) div (x2 - x1) + ny1b
           let cnyb = clamp(nyb, ytop[x], ybottom[x])
           # If our ceiling is higher than their ceiling, render upper wall 
-          let r1 = 0x010101 * (255-z)
-          let r2 = 0x040007 * (31-(z div 8))
-          vline(x, cya, cnya-1, 0, if x == x2 or x == x1: 0 else: r1, 0)
+          let r1 = WallBaseColor * (255-z)
+          let r2 = BottomWallBaseColor * (31-(z div 8))
+          vline(x, cya, cnya-1, WallTopBorder, if x == x2 or x == x1: WallTopBorder else: r1, WallBottomBorder)
           ytop[x] = clamp(max(cya, cnya), ytop[x], WH - 1)
           # If our floor is lower than their floor, render bottom wall 
-          vline(x, cnyb+1, cyb, 0, if x == x1 or x == x2: 0 else: r2, 0)
+          vline(x, cnyb+1, cyb, BottomWallTopBorder, if x == x1 or x == x2: BottomWallTopBorder else: r2, BottomWallBottomBorder)
           ybottom[x] = clamp(min(cyb, cnyb), 0, ybottom[x])
         else:
           # There's no neighbor. Render wall from top (cya = ceiling level) to bottom (cyb = floor level). 
-          let r = 0x010101 * (255-z)
-          vline(x, cya, cyb, 0, if x == x1 or x == x2: 0 else: r, 0)
+          let r = WallBaseColor * (255-z)
+          vline(x, cya, cyb, WallTopBorder, if x == x1 or x == x2: WallTopBorder else: r, WallBottomBorder)
 
       # Schedule the neighboring sector for rendering within the window formed by this wall. 
       if neighbor >= 0 and endx > beginx and not queueFull():

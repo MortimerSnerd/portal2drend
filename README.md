@@ -93,6 +93,9 @@ Notes from the port:
   was only in anticipation of using some helper code I have
   for SDL2 in modified versions from the basic port. 
   
++ Changed the bottom wall base color from a magenta to a 
+  shade of green for a contrast I can see better.
+
 + I changed the map parsing code from `scanf()`
   to parsing functions similar to and from the 
   Nim `parseutils` module. Requires noticably more code than
