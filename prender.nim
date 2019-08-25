@@ -203,7 +203,7 @@ var renderedsectors: seq[int32]
   ## Vars persisted over multiple calls to DrawScreen when
   ## drawing one sector at a time.
 
-{.push checks: off.}
+{.push overflowChecks: off.}
 proc DrawScreen(justOneSector = false) = 
   if queueEmpty():
     for x in 0..<WW: ybottom[x] = WH-1
