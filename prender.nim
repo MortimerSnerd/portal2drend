@@ -23,12 +23,15 @@ type
     angle, anglesin, anglecos, yaw: float32
     sector: uint16
 
+  DrawModes = enum
+    FullSpeed, SectorAtATime
+
 var NumSectors : Natural
 var surface: SurfacePtr
 var window: WindowPtr
 var sectors: seq[Sector]
 var player: Player
-var renderedsectors: seq[int32] # Used by DrawScreen. Kept global to avoid re-allocs.
+var drawMode = FullSpeed
 
 template clamp(a, mi, ma: untyped) : untyped = min(max(a, mi), ma)
 template vxs(x0, y0, x1, y1: untyped) : untyped = x0*y1 - x1*y0
@@ -167,39 +170,50 @@ proc vline(x, py1, py2, top, middle, bottom: int32) =
     setp(y2, bottom)
     
 
+const MaxQueue = 32
+type 
+    Item = object 
+      sectorno, sx1, sx2: int32 
+
+    FixedQueue = object
+      arr: array[MaxQueue, Item]
+      head, tail:  int32
+      
+var DrawQ: FixedQueue
+
+template enqueue(it: Item) : untyped = 
+  DrawQ.arr[DrawQ.head] = it
+  DrawQ.head += 1
+  if DrawQ.head == MaxQueue: DrawQ.head = 0
+
+template dequeue() : ptr Item = 
+  assert DrawQ.head != DrawQ.tail
+  let it = DrawQ.arr[DrawQ.tail].addr
+  DrawQ.tail += 1
+  if DrawQ.tail == MaxQueue: DrawQ.tail = 0
+  it
+
+template queueFull() : bool = 
+  ((DrawQ.head+MaxQueue+1-DrawQ.tail) mod MaxQueue) == 0
+
+template queueEmpty() : bool = DrawQ.head == DrawQ.tail
+
+var ytop, ybottom: array[WW,int32]
+var renderedsectors: seq[int32] 
+  ## Vars persisted over multiple calls to DrawScreen when
+  ## drawing one sector at a time.
+
 {.push checks: off.}
-proc DrawScreen() = 
-  const MaxQueue = 32
-  type Item = object 
-    sectorno, sx1, sx2: int32 
-  var queue: array[MaxQueue, Item]
-  var head = 0
-  var tail = 0
-  var ytop, ybottom: array[WW,int32]
+proc DrawScreen(justOneSector = false) = 
+  if queueEmpty():
+    for x in 0..<WW: ybottom[x] = WH-1
+    zeroMem(ytop[0].addr, sizeof(ytop[0])*WW)
+    setLen(renderedsectors, len(sectors))
+    zeroMem(renderedsectors[0].addr, sizeof(renderedsectors[0]) * len(renderedsectors))
+    # Begin whole-screen rendering from where the player is.
+    enqueue(Item(sectorno: int32(player.sector), sx1: 0, sx2: WW-1))
 
-  for x in 0..<WW: ybottom[x] = WH-1
-  setLen(renderedsectors, len(sectors))
-  zeroMem(renderedsectors[0].addr, sizeof(renderedsectors[0]) * len(renderedsectors))
-
-  template enqueue(it: Item) : untyped = 
-    queue[head] = it
-    head += 1
-    if head == MaxQueue: head = 0
-
-  template dequeue() : untyped = 
-    assert head != tail
-    let it = queue[tail].addr
-    tail += 1
-    if tail == MaxQueue: tail = 0
-    it
-
-  template queueFull() : untyped = 
-    ((head+MaxQueue+1-tail) mod MaxQueue) == 0
-
-  # Begin whole-screen rendering from where the player is.
-  enqueue(Item(sectorno: int32(player.sector), sx1: 0, sx2: WW-1))
-
-  while head != tail:
+  while not queueEmpty():
     let now = dequeue()
 
     if (renderedsectors[now.sectorno] and 0x21) != 0: 
@@ -298,7 +312,7 @@ proc DrawScreen() =
         let cyb = clamp(yb, ytop[x], ybottom[x])
 
         # Render ceiling: everything above this sector's ceiling height. 
-        vline(x, ytop[x], cya-1, 0x111111, 0x222222, 0x111111)
+        vline(x, ytop[x], cya-1, 0x111111, 0x222222, 0x11111)
         # Render floor: everything below this sector's floor height. 
         vline(x, cyb+1, ybottom[x], 0x0000ff, 0x0000aa, 0x0000ff)
 
@@ -327,6 +341,9 @@ proc DrawScreen() =
         enqueue(Item(sectorno: neighbor, sx1: beginx, sx2: endx))
 
     renderedsectors[now.sectorno] += 1
+    if justOneSector:
+      echo &"Drew sector {now[]}"
+      break
 {.pop.}
 
 proc MovePlayer(dx, dy: float32) = 
@@ -359,67 +376,84 @@ proc RunLoop() =
   var yaw = 0.0f
   var ev = Event(kind: QuitEvent)
   var avgTicks = uint32(0)
+  var callDraw = drawMode == FullSpeed
+  var doMovement: bool
+
   # Keep mouse in center of window.
   warpMouseInWindow(window, WW div 2, WH div 2)
 
   falling = true
   while running:
     let startT = getTicks()
-    discard lockSurface(surface)
-    DrawScreen()
-    unlockSurface(surface)
-    discard updateSurface(window)
+
+    if callDraw:
+      discard lockSurface(surface)
+      DrawScreen(justOneSector = drawMode == SectorAtATime)
+      unlockSurface(surface)
+      discard updateSurface(window)
+
+      if drawMode == SectorAtATime:
+        callDraw = false
+
+    if queueEmpty():
+      # Frame was finished
+      doMovement = true
+      if drawMode == SectorAtATime:
+        echo "Finished frame, back to full speed."
+      drawMode = FullSpeed
+      callDraw = true
 
     # Vertical collision detection 
-    let eyeheight = if ducking: DuckHeight else: EyeHeight
-    ground = not falling
-    if falling:
-      player.velocity.z -= 0.05f
-      let nextz = player.where.z + player.velocity.z
-      if player.velocity.z < 0 and nextz < sectors[player.sector].floor + eyeheight:
-        # Fix to ground 
-        player.where.z = sectors[player.sector].floor + eyeheight
-        player.velocity.z = 0
-        falling = false
-        ground = true
-      elif player.velocity.z > 0 and nextz > sectors[player.sector].ceil:
-        # Prevent jumping above ceiling
-        player.velocity.z = 0
-        falling = true
-
+    if doMovement:
+      let eyeheight = if ducking: DuckHeight else: EyeHeight
+      ground = not falling
       if falling:
-        player.where.z += player.velocity.z
-        moving = true
+        player.velocity.z -= 0.05f
+        let nextz = player.where.z + player.velocity.z
+        if player.velocity.z < 0 and nextz < sectors[player.sector].floor + eyeheight:
+          # Fix to ground 
+          player.where.z = sectors[player.sector].floor + eyeheight
+          player.velocity.z = 0
+          falling = false
+          ground = true
+        elif player.velocity.z > 0 and nextz > sectors[player.sector].ceil:
+          # Prevent jumping above ceiling
+          player.velocity.z = 0
+          falling = true
 
-    if moving:
-      # Horizontal collision detection 
-      let px = player.where.x
-      let py = player.where.y
-      var dx = player.velocity.x
-      var dy = player.velocity.y
-      let sect = sectors[player.sector].addr
-      template vert : untyped = sect.vertex
+        if falling:
+          player.where.z += player.velocity.z
+          moving = true
 
-      # Check if the player is about to cross one of the sector's edges 
-      for s in 0..<int(sect.npoints):
-        if (IntersectBox(px, py, px+dx, py+dy, vert[s+0].x, vert[s+0].y, vert[s+1].x, vert[s+1].y) and 
-            PointSide(px+dx, py+dy, vert[s+0].x, vert[s+0].y, vert[s+1].x, vert[s+1].y) < 0):
-          # Check where the hole is. 
-          let hole_low = if sect.neighbors[s] < 0: 9e9f else: max(sect.floor, sectors[sect.neighbors[s]].floor)
-          let hole_high = if sect.neighbors[s] < 0: -9e9f else: min(sect.ceil, sectors[sect.neighbors[s]].ceil)
+      if moving:
+        # Horizontal collision detection 
+        let px = player.where.x
+        let py = player.where.y
+        var dx = player.velocity.x
+        var dy = player.velocity.y
+        let sect = sectors[player.sector].addr
+        template vert : untyped = sect.vertex
 
-          # Check whether we're bumping into a wall. 
-          if hole_high < player.where.z + HeadMargin or hole_low > player.where.z - eyeheight+KneeHeight:
-            # Bumps into a wall! Slide along the wall. 
-            # This formula is from Wikipedia article "vector projection". 
-            let xd = vert[s+1].x - vert[s+0].x
-            let yd = vert[s+1].y - vert[s+0].y
-            dx = xd * (dx*xd + yd*dy) / (xd*xd + yd*yd)
-            dy = yd * (dx*xd + yd*dy) / (xd*xd + yd*yd)
-            moving = false
+        # Check if the player is about to cross one of the sector's edges 
+        for s in 0..<int(sect.npoints):
+          if (IntersectBox(px, py, px+dx, py+dy, vert[s+0].x, vert[s+0].y, vert[s+1].x, vert[s+1].y) and 
+              PointSide(px+dx, py+dy, vert[s+0].x, vert[s+0].y, vert[s+1].x, vert[s+1].y) < 0):
+            # Check where the hole is. 
+            let hole_low = if sect.neighbors[s] < 0: 9e9f else: max(sect.floor, sectors[sect.neighbors[s]].floor)
+            let hole_high = if sect.neighbors[s] < 0: -9e9f else: min(sect.ceil, sectors[sect.neighbors[s]].ceil)
 
-      MovePlayer(dx, dy)
-      falling = true
+            # Check whether we're bumping into a wall. 
+            if hole_high < player.where.z + HeadMargin or hole_low > player.where.z - eyeheight+KneeHeight:
+              # Bumps into a wall! Slide along the wall. 
+              # This formula is from Wikipedia article "vector projection". 
+              let xd = vert[s+1].x - vert[s+0].x
+              let yd = vert[s+1].y - vert[s+0].y
+              dx = xd * (dx*xd + yd*dy) / (xd*xd + yd*yd)
+              dy = yd * (dx*xd + yd*dy) / (xd*xd + yd*yd)
+              moving = false
+
+        MovePlayer(dx, dy)
+        falling = true
 
     while pollEvent(ev):
       if ev.kind == QuitEvent:
@@ -443,46 +477,58 @@ proc RunLoop() =
         of K_LCTRL, K_RCTRL:
           ducking = ev.kind == KeyDown
           falling = true
+        of K_TAB:
+          callDraw = callDraw or ev.kind == KeyDown
+        of K_t:
+          if ev.kind == KeyDown and drawMode == FullSpeed:
+            # Clear screen before doing one sector at a time.
+            var srect: sdl2.Rect = (x: 0.int32, y: 0.int32, w: WW, h: WH)
+            fillRect(surface, srect.addr, 0)
+            discard lockSurface(surface)
+            unlockSurface(surface)
+            drawMode = SectorAtATime
+
         else:
           discard
 
-    var x, y: int32
-    discard getMouseState(x, y)
-    x = x - WW div 2
-    y = y - WH div 2
-    warpMouseInWindow(window, WW div 2, WH div 2)
+    if doMovement:
+      var x, y: int32
+      discard getMouseState(x, y)
+      x = x - WW div 2
+      y = y - WH div 2
+      warpMouseInWindow(window, WW div 2, WH div 2)
 
-    player.angle += float32(x) * 0.03f
-    yaw = clamp(yaw + float32(y)*0.05f, -5.0f, 5.0f)
-    player.yaw = yaw - player.velocity.z*0.5f
-    MovePlayer(0, 0)
+      player.angle += float32(x) * 0.03f
+      yaw = clamp(yaw + float32(y)*0.05f, -5.0f, 5.0f)
+      player.yaw = yaw - player.velocity.z*0.5f
+      MovePlayer(0, 0)
 
-    var pushing = false
-    var move_vec: V2f
-    if wsad[0]: 
-      move_vec.x += player.anglecos*0.2f
-      move_vec.y += player.anglesin*0.2f
-      pushing = true
-    if wsad[1]:
-      move_vec.x -= player.anglecos*0.2f
-      move_vec.y -= player.anglesin*0.2f
-      pushing = true
-    if wsad[2]:
-      move_vec.x += player.anglesin*0.2f
-      move_vec.y -= player.anglecos*0.2f
-      pushing = true
-    if wsad[3]:
-      move_vec.x -= player.anglesin*0.2f
-      move_vec.y += player.anglecos*0.2f
-      pushing = true
+      var pushing = false
+      var move_vec: V2f
+      if wsad[0]: 
+        move_vec.x += player.anglecos*0.2f
+        move_vec.y += player.anglesin*0.2f
+        pushing = true
+      if wsad[1]:
+        move_vec.x -= player.anglecos*0.2f
+        move_vec.y -= player.anglesin*0.2f
+        pushing = true
+      if wsad[2]:
+        move_vec.x += player.anglesin*0.2f
+        move_vec.y -= player.anglecos*0.2f
+        pushing = true
+      if wsad[3]:
+        move_vec.x -= player.anglesin*0.2f
+        move_vec.y += player.anglecos*0.2f
+        pushing = true
 
-    let acceleration = if pushing: 0.4f else: 0.2f
+      let acceleration = if pushing: 0.4f else: 0.2f
 
-    player.velocity.x = player.velocity.x * (1-acceleration) + move_vec.x * acceleration
-    player.velocity.y = player.velocity.y * (1-acceleration) + move_vec.y * acceleration
+      player.velocity.x = player.velocity.x * (1-acceleration) + move_vec.x * acceleration
+      player.velocity.y = player.velocity.y * (1-acceleration) + move_vec.y * acceleration
 
-    if pushing:
-      moving = true
+      if pushing:
+        moving = true
 
     let endT = getTicks()
     let td = endT - startT

@@ -69,6 +69,18 @@ To compile the port:
 All versions expect to be run from the [dist](dist/) directory, which
 contains map data, and other files loaded at runtime.
 
+### Key bindings
+
++ **W**: Move forward
++ **S**: Move backward
++ **A**: Sidestep left
++ **D**: Sidestep right
++ Move the mouse to look around
++ **T**: Go into debug mode where only one sector is drawn at a time.  When in this mode `TAB`
+  will draw the next queued sector.  Prints debugging messages to 
+  stdout for each sector, and when all sectors are done.
++ **Escape** or **Q** - quit
+
 ## Port information
 
 The port is fairly straightforward, where I tried to keep the
