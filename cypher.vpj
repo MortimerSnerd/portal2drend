@@ -47,7 +47,7 @@
 				CaptureOutputWith="ProcessBuffer"
 				ClearProcessBuffer="1"
 				RunFromDir="%rwdist">
-				<Exec CmdLine="./cypher"/>
+				<Exec CmdLine="./prender"/>
 			</Target>
 		</Menu>
 	</Config>
