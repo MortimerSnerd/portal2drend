@@ -138,9 +138,10 @@ Notes from the port:
 
 ## Bugs
 
-There's a bug in the port where black lines show through some floors that I need 
-to track down.
-
++ On the top floor, at certain positions right of the stairs, a bright white
+  wall is rendered when facing a certain angle.  Both the original and the port
+  do this.
+  
 ## What's next?
 
 I'll probably experiment with some changes to the port.  I'll put significant
