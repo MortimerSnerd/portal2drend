@@ -2,5 +2,6 @@
 <Workspace Version="10.0" VendorName="SlickEdit">
 	<Projects>
 		<Project File="cypher.vpj"/>
+		<Project File="glversion/glprender.vpj"/>
 	</Projects>
 </Workspace>

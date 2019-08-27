@@ -1,5 +1,6 @@
 import 
-  geom, math, parseutils, sdl2, random, strformat
+  geom, glsupport, math, parseutils, sdl2, sdl2/image, random, strformat,
+  zstats
 
 const
   WW = int32(608)
@@ -558,10 +559,15 @@ proc RunLoop() =
   echo &"avgTicks={avgTicks}"
 
 proc go() = 
-  randomize()
-  assert sdl2.init(INIT_VIDEO) == SdlSuccess, $sdl2.getError()
+  var allRes: ResourceSet
+  let imgflags = IMG_INIT_PNG.cint
 
-  window = createWindow("Renderer Example", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WW, WH, 0)
+  assert sdl2.init(INIT_VIDEO) == SdlSuccess, $sdl2.getError()
+  assert image.init(imgflags) == imgflags, $sdl2.getError()
+
+  window = glsupport.Init(allRes) do () -> WindowPtr:
+    createWindow("Renderer Example", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WW, WH, SDL_WINDOW_OPENGL)
+
   assert window != nil, $sdl2.getError()
 
   surface = getSurface(window)
@@ -572,6 +578,15 @@ proc go() =
   try:
     LoadData()
     RunLoop()
+    echo GC_getStatistics()
+    zstats.PrintReport()
+  except:
+    echo "UNCAUGHT EXCEPTION"
+    var e = getCurrentException()
+    while not e.isNil:
+      echo(&"{e.msg}\n{e.getStackTrace()}")
+      echo "---------"
+      e = e.parent
   finally:
     destroyWindow(window)
     sdl2.quit()

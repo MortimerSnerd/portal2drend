@@ -1,3 +1,9 @@
 [submodule "vendor/sdl2"]
 	path = vendor/sdl2
 	url = https://github.com/nim-lang/sdl2
+[submodule "vendor/opengl"]
+	path = vendor/opengl
+	url = https://github.com/nim-lang/opengl
+[submodule "vendor/x11"]
+	path = vendor/x11
+	url = https://github.com/nim-lang/x11
