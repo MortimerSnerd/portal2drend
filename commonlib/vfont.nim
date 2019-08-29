@@ -127,7 +127,7 @@ proc Text*(batch: VertBatch[VtxColor,uint16]; msg: string; topLeft: V2f; scale: 
   result = (pos.x, LetterHtScaleX1 * scale)
 
 when isMainModule:
-  import sdl2
+  import sdl2, zstats
   proc go() = 
     const 
       WW = 1024
@@ -160,9 +160,11 @@ when isMainModule:
 
     BindAndConfigureArray(vertv, VtxColorDesc)
     glLineWidth(1.0f)
+    glViewport(0, 0, WW, WH)
 
     var running = true
     while running:
+      let start = getTicks()
       var ev = Event(kind: QuitEvent)
 
       while pollEvent(ev):
@@ -176,11 +178,16 @@ when isMainModule:
       Text(verts, "ABCDEFGHIJKLMNOPQRSTUVWXYZ, 0123456789. WOT?", (20.0f, 20.0f), 2.0f, BlueG)
       Text(verts, "Now: your face asplode!! %%%", (20.0f, 100.0f), 3.0f, WhiteG)
 
-      SubmitAndDraw(verts, vertv, verti)
+      SubmitAndDraw(verts, vertv, verti, GL_LINES)
       SwapWindow(window)
+
+      let now = getTicks()
+      zstats.Record(znFrameTime, float(now - start) * 0.001)
 
   try:
     go()
+    echo GC_getStatistics()
+    zstats.PrintReport()
   except:
     echo "UNCAUGHT EXCEPTION"
     var e = getCurrentException()

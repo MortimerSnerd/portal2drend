@@ -6,7 +6,6 @@ type
     ## Batch of geometry in indexed primitive format.
     vertices*: seq[V]
     indices*: seq[I]
-    primitive*: GLenum  ## GL_TRIANGLES, GL_LINES, etc
 
 proc glIndexType[I]() : GLEnum = 
   when I is uint16:
@@ -26,18 +25,17 @@ proc NewVertBatch*[V,I](prim: GLenum) : VertBatch[V,I] =
   ## renderer to be submitted at a particular depth.  Prefer larger
   ## batches, as multiple VertBatch objects do not get coalesced into 
   ## a single upload.
-  result = VertBatch[V,I](primitive: prim, 
-                          vertices: newSeq[V](64), 
+  result = VertBatch[V,I](vertices: newSeq[V](64), 
                           indices: newSeq[I](64))
   Clear(result)
 
-proc SubmitAndDraw*[V,I](vb: VertBatch[V,I]; vertBuf, idxBuf: BufferObject) = 
+proc SubmitAndDraw*[V,I](vb: VertBatch[V,I]; vertBuf, idxBuf: BufferObject; primitive: GLenum) = 
   ## Uploads the batch to the given buffer objects, and then draws it.
   ## This assumes the buffer objects are already enabled and bound.
   if len(vb.indices) > 0:
     Populate(vertBuf, GL_ARRAY_BUFFER, vb.vertices, GL_DYNAMIC_DRAW)
     Populate(idxBuf, GL_ELEMENT_ARRAY_BUFFER, vb.indices, GL_DYNAMIC_DRAW)
-    glDrawElements(vb.primitive, len(vb.indices).GLsizei, glIndexType[I](), cast[pointer](0))
+    glDrawElements(primitive, len(vb.indices).GLsizei, glIndexType[I](), cast[pointer](0))
 
 proc Triangulate*[V,I](vb: VertBatch[V,I]; verts: openarray[V]) = 
   ## Given a clockwise array of points for a convex polygon, triangulates
@@ -63,7 +61,6 @@ proc Triangulate*[V,I](vb: VertBatch[V,I]; verts: openarray[V]) =
      
 proc AddLine*[V,I](vb: VertBatch[V,I]; a, b: V) = 
   ## Adds a line to the batch to be drawn.
-  assert vb.primitive == GL_LINES
   let base = len(vb.vertices).I
   
   vb.vertices.add(a)
