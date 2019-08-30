@@ -1281,6 +1281,11 @@ iterator pointsOnLine*(a, b: V2X[int]) : auto =
       err += dx
       pa.y += sy
 
+template degrees*[T](deg: T) : T = 
+  ## Converts degrees to the radians unit used
+  ## in this and the math modules.
+  deg * PI / T(180)
+
 when isMainModule:
   import algorithm, strformat
 

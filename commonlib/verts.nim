@@ -20,7 +20,7 @@ proc Clear*[V,I](vb: VertBatch[V,I]) =
 
 template HasVerts*[V,I](vb: VertBatch[V,I]) : untyped = len(vb.vertices) > 0
 
-proc NewVertBatch*[V,I](prim: GLenum) : VertBatch[V,I] = 
+proc NewVertBatch*[V,I]() : VertBatch[V,I] = 
   ## Creates a new vertice batch that can be submitted to the sprite
   ## renderer to be submitted at a particular depth.  Prefer larger
   ## batches, as multiple VertBatch objects do not get coalesced into 

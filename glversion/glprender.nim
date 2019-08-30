@@ -1,6 +1,6 @@
 import 
-  geom, glsupport, math, parseutils, sdl2, sdl2/image, random, strformat,
-  zstats
+  geom, glsupport, math, opengl, parseutils, sdl2, sdl2/image, 
+  random, strformat, zstats, verts, vfont
 
 const
   WW = int32(608)
@@ -224,6 +224,77 @@ var renderedsectors: seq[int32]
   ## Vars persisted over multiple calls to DrawScreen when
   ## drawing one sector at a time.
 
+type
+  GLState = ref object
+    uni: StdUniforms
+    uniblk: BufferObject
+    verts, indices: BufferObject
+    batch2: VertBatch[VtxColor,uint16]
+    batch3: VertBatch[TxVtxColor,uint16]
+    shSolidColor, shSolidColor3: Program
+
+proc NewGLState(rs: var ResourceSet) : GLState = 
+  let colorf = NewShaderFromFile(rs, "color.frag", GL_FRAGMENT_SHADER)
+
+  result = GLState(uniblk: NewBufferObject(rs), 
+                   verts: NewBufferObject(rs), 
+                   indices: NewBufferObject(rs), 
+                   batch2: NewVertBatch[VtxColor,uint16](), 
+                   batch3: NewVertBatch[TxVtxColor,uint16](),
+                   shSolidColor: NewProgram(rs, 
+                                            [NewShaderFromFile(rs, "color.vtx", GL_VERTEX_SHADER), 
+                                             colorf]), 
+                   shSolidColor3: NewProgram(rs, 
+                                             [NewShaderFromFile(rs, "color3.vtx", GL_VERTEX_SHADER),
+                                              colorf]))
+
+  glBindBufferBase(GL_UNIFORM_BUFFER, StdUniformsBinding, result.uniblk.handle)
+  glEnable(GL_CULL_FACE)
+
+
+proc DrawScreenGL(gls: GLState; justOneSector: bool) = 
+  template SubmitUniforms() : untyped = Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
+
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
+  glClear(GL_COLOR_BUFFER_BIT)
+
+  # Don't have a function to make matrix from rotation and yaw?
+  let rotm = rotation3d((0.0f, -1.0f, 0.0f), player.yaw) * rotation3d((0.0f, 0.0f, 1.0f), player.angle)
+  let eye = player.where - vec3(0.0f, 0.0f, EyeHeight)
+  let targ = eye + vec3(rotm * (1.0f, 0.0f, 0.0f, 0.0f))
+  let p = perspectiveProjection(60.0f.degrees, 0.1f, -30.0f, WW.float32 / WH.float32)
+  let mv = lookAt(eye, targ, (0.0f, 0.0f, -1.0f))
+
+  gls.uni.mvp = p * mv
+  gls.uni.cameraWorldPos = vec4(eye, 1.0f)
+  SubmitUniforms()
+
+  #+DEBUGGERY
+  # Draw a rect for us to look at.
+  Use(gls.shSolidColor3)
+  Clear(gls.batch3)
+  BindAndConfigureArray(gls.verts, TxVtxColorDesc)
+  Triangulate(gls.batch3, [
+    TxVtxColor(pos: (15.0f, 6.0f, -6.0f), tc: (0.0f, 0.0f),  color: WhiteG),
+    TxVtxColor(pos: (15.0f, 16.0f, -6.0f), tc: (0.0f, 0.0f),  color: WhiteG),
+    TxVtxColor(pos: (15.0f, 16.0f, 0.0f), tc: (0.0f, 0.0f),  color: WhiteG),
+    TxVtxColor(pos: (15.0f, 6.0f, 0.0f), tc: (0.0f, 0.0f),  color: BlueG)])
+  SubmitAndDraw(gls.batch3, gls.verts, gls.indices, GL_TRIANGLES)
+  #-DEBUGGERY
+
+  # Write OpenGL in the bottom left of the screen.
+  gls.uni.mvp = orthoProjectionYDown[float32](0.0f, WW.float32, 0.0f, WH.float32, -10.0f, 10.0f)
+  gls.uni.tint = WhiteG
+  SubmitUniforms()
+
+  Use(gls.shSolidColor)
+  BindAndConfigureArray(gls.verts, VtxColorDesc)
+  Clear(gls.batch2)
+  Text(gls.batch2, "OpenGL", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
+  SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
+
+  SwapWindow(window)
+
 {.push overflowChecks: off.}
 proc DrawScreen(justOneSector = false) = 
   if queueEmpty():
@@ -259,6 +330,8 @@ proc DrawScreen(justOneSector = false) =
 
       # Is the wall at least partially in front of the player? 
       if tz1 <= 0 and tz2 <= 0: 
+        if justOneSector:
+          echo &"Reject sector {now.sectorno} BEHIND"
         continue
 
       # If it's partially behind the player, clip it against player's view frustrum 
@@ -294,6 +367,8 @@ proc DrawScreen(justOneSector = false) =
       let yscale2 = vfov / tz2
       let x2 = WW div 2 - int32(tx2 * xscale2)
       if x1 >= x2 or x2 < now.sx1 or x1 > now.sx2:
+        if justOneSector:
+          echo &"Reject sector {now.sectorno} X REJECT"
         continue # only render if it's visible
 
       # Acquire the floor and ceiling heights, relative to where the player's view is 
@@ -390,7 +465,11 @@ proc MovePlayer(dx, dy: float32) =
   player.anglesin = sin(player.angle)
   player.anglecos = cos(player.angle)
 
-proc RunLoop() = 
+proc RunLoop(gls: GLState) = 
+  type Renderer = enum
+    rOriginal, rOpenGL
+
+  var mode = rOriginal
   var wsad: array[4,bool]
   var ground, falling, moving, ducking: bool
   var running = true
@@ -408,10 +487,15 @@ proc RunLoop() =
     let startT = getTicks()
 
     if callDraw:
-      discard lockSurface(surface)
-      DrawScreen(justOneSector = drawMode == SectorAtATime)
-      unlockSurface(surface)
-      discard updateSurface(window)
+      case mode
+      of rOriginal:
+        discard lockSurface(surface)
+        DrawScreen(justOneSector = drawMode == SectorAtATime)
+        unlockSurface(surface)
+        discard updateSurface(window)
+
+      of rOpenGL:
+        DrawScreenGL(gls, justOneSector = drawMode == SectorAtATime)
 
       if drawMode == SectorAtATime:
         callDraw = false
@@ -508,19 +592,27 @@ proc RunLoop() =
             discard lockSurface(surface)
             unlockSurface(surface)
             drawMode = SectorAtATime
+        of K_m:
+          if ev.kind == KeyUp:
+            case mode
+            of rOriginal:
+              mode = rOpenGL
+            of rOpenGL:
+              mode = rOriginal
 
         else:
           discard
 
     if doMovement:
       var x, y: int32
+      const MouseSensitivity = 0.005f
       discard getMouseState(x, y)
       x = x - WW div 2
       y = y - WH div 2
       warpMouseInWindow(window, WW div 2, WH div 2)
 
-      player.angle += float32(x) * 0.03f
-      yaw = clamp(yaw + float32(y)*0.05f, -5.0f, 5.0f)
+      player.angle += float32(x) * MouseSensitivity
+      yaw = clamp(yaw + float32(y)*MouseSensitivity*4.0f, -5.0f, 5.0f)
       player.yaw = yaw - player.velocity.z*0.5f
       MovePlayer(0, 0)
 
@@ -573,11 +665,14 @@ proc go() =
   surface = getSurface(window)
   assert surface != nil, $sdl2.getError()
 
+  let gls = NewGLState(allRes)
+
   showCursor(false)
+  vfont.Init()
 
   try:
     LoadData()
-    RunLoop()
+    RunLoop(gls)
     echo GC_getStatistics()
     zstats.PrintReport()
   except:
