@@ -58,7 +58,32 @@ proc Triangulate*[V,I](vb: VertBatch[V,I]; verts: openarray[V]) =
     ii += 3
     i0 += 1
     i1 += 1
-     
+
+proc TriangulateRev*[V,I](vb: VertBatch[V,I]; verts: openarray[V]) = 
+  ## Given a counter-clockwise array of points for a convex polygon, triangulates
+  ## the polygon. No checking is done to verify the polygon is convex.
+  assert len(verts) > 2
+  let base = len(vb.vertices).I
+  let ibase = len(vb.indices).I
+
+  for i in countdown(len(verts)-1, 0):
+    vb.vertices.add(verts[i])
+
+  vb.indices.setLen(len(vb.indices) + (len(verts) - 2) * 3)
+  var
+    i0 = base + 2
+    i1 = base + 1
+    ii = ibase.int
+
+  let vlen = len(vb.vertices).I
+  while i0 < vlen:
+    vb.indices[ii] = i0
+    vb.indices[ii+1] = i1
+    vb.indices[ii+2] = base
+    ii += 3
+    i0 += 1
+    i1 += 1
+ 
 proc AddLine*[V,I](vb: VertBatch[V,I]; a, b: V) = 
   ## Adds a line to the batch to be drawn.
   let base = len(vb.vertices).I

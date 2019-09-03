@@ -1,5 +1,5 @@
 import 
-  geom, glsupport, math, opengl, parseutils, sdl2, sdl2/image, 
+  geom, glsupport, math, opengl, os, parseutils, sdl2, sdl2/image, 
   random, strformat, zstats, verts, vfont
 
 const
@@ -31,6 +31,11 @@ const
   BottomWallBottomBorder = 0x000000
   BottomWallBaseColor = 0x000700   # Base color that multiplied by inverse of distance from player.
 
+template glColor(c: int32) : V4f = 
+  (float32((c shr 16) and 255) / 255, 
+   float32((c shr 8) and 255) / 255,
+   float32(c and 255) / 255, 
+   1.0f)
 
 type
   Sector = object
@@ -115,8 +120,8 @@ proc parsedIntList(line: var string; ix: var int; res: var seq[int]) : bool =
 
   result = result and len(res) > 0
 
-proc LoadData() = 
-  let fp = open("map-clear.txt", fmRead)
+proc LoadData(fn: string) = 
+  let fp = open(fn, fmRead)
   try:
     var line, ident: string
     var verts: seq[V2f]
@@ -246,41 +251,115 @@ proc NewGLState(rs: var ResourceSet) : GLState =
                                              colorf]), 
                    shSolidColor3: NewProgram(rs, 
                                              [NewShaderFromFile(rs, "color3.vtx", GL_VERTEX_SHADER),
-                                              colorf]))
+                                              NewShaderFromFile(rs, "color3.frag", GL_FRAGMENT_SHADER)]))
 
   glBindBufferBase(GL_UNIFORM_BUFFER, StdUniformsBinding, result.uniblk.handle)
   glEnable(GL_CULL_FACE)
+  glDepthFunc(GL_LESS)
 
 
+var FOV = 90.0f
 proc DrawScreenGL(gls: GLState; justOneSector: bool) = 
   template SubmitUniforms() : untyped = Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
+  const notc = (0.0f, 0.0f)
 
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
-  glClear(GL_COLOR_BUFFER_BIT)
+  glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
+  glEnable(GL_DEPTH_TEST)
+  glDepthMask(true)
 
-  # Don't have a function to make matrix from rotation and yaw?
-  let rotm = rotation3d((0.0f, -1.0f, 0.0f), player.yaw) * rotation3d((0.0f, 0.0f, 1.0f), player.angle)
-  let eye = player.where - vec3(0.0f, 0.0f, EyeHeight)
-  let targ = eye + vec3(rotm * (1.0f, 0.0f, 0.0f, 0.0f))
-  let p = perspectiveProjection(60.0f.degrees, 0.1f, -30.0f, WW.float32 / WH.float32)
-  let mv = lookAt(eye, targ, (0.0f, 0.0f, -1.0f))
+  # Reminder - world coordinates are XY is the ground plane, and Z+ is up.
+  # We need to transform to camera coordinates of x+ right, y+ up, and z- fwd.
+  let eye = player.where
+  let yaw = player.yaw / 4.0f
+  let rot = rotation3d((0.0f, 0.0f, 1.0f), player.angle + float32(PI)) * rotation3d((0.0f, -1.0f, 0.0f), yaw)
+  let fwd = vec3(rot*(1.0f, 0.0f, 0.0f, 0.0f))
+  let mv = lookAt(eye, eye + fwd, (0.0f, 0.0f, -1.0f))
+  let near = 1.0f / tan(FOV.degrees/2.0f)
+  let top = WW.float32 / WH.float32
+  let p = perspectiveProjectionInf(-1.0f, 1.0f, -top, top, near, 100.0f)
 
   gls.uni.mvp = p * mv
   gls.uni.cameraWorldPos = vec4(eye, 1.0f)
   SubmitUniforms()
 
-  #+DEBUGGERY
-  # Draw a rect for us to look at.
   Use(gls.shSolidColor3)
   Clear(gls.batch3)
   BindAndConfigureArray(gls.verts, TxVtxColorDesc)
-  Triangulate(gls.batch3, [
-    TxVtxColor(pos: (15.0f, 6.0f, -6.0f), tc: (0.0f, 0.0f),  color: WhiteG),
-    TxVtxColor(pos: (15.0f, 16.0f, -6.0f), tc: (0.0f, 0.0f),  color: WhiteG),
-    TxVtxColor(pos: (15.0f, 16.0f, 0.0f), tc: (0.0f, 0.0f),  color: WhiteG),
-    TxVtxColor(pos: (15.0f, 6.0f, 0.0f), tc: (0.0f, 0.0f),  color: BlueG)])
+
+  # First pass - just render everything to see if we can get the basic rendering 
+  # correct, without any complications from visibility testing.  Keep the general
+  # order of rendering so it tends to go from near to far. Not attempting to make
+  # the lines that show where the sector and wall edges are.
+  if queueEmpty():
+    setLen(renderedsectors, len(sectors))
+    zeroMem(renderedsectors[0].addr, sizeof(renderedsectors[0]) * len(renderedsectors))
+    # Begin whole-screen rendering from where the player is.
+    enqueue(Item(sectorno: int32(player.sector), sx1: 0, sx2: WW-1))
+
+  var floorVtx, ceilVtx: seq[TxVtxColor]
+  while not queueEmpty():
+    let now = dequeue()
+
+    if renderedsectors[now.sectorno] != 0: 
+      continue
+
+    renderedsectors[now.sectorno] += 1
+    setLen(floorVtx, 0)
+    setLen(ceilVtx, 0)
+
+    let sect = sectors[now.sectorno].addr
+    for s in 0..<int(sect.npoints):
+      add(floorVtx, TxVtxColor(pos: vec3(sect.vertex[s], sect.floor), 
+                               tc: (0.0f, 0.0f), 
+                               color: glColor(FloorColor)))
+      add(ceilVtx, TxVtxColor(pos: vec3(sect.vertex[s], sect.ceil), 
+                               tc: (0.0f, 0.0f), 
+                               color: glColor(CeilingColor)))
+
+      let neighbor = sect.neighbors[s]
+
+      if neighbor >= 0:
+        # Neighboring sector.
+        if not queueFull():
+          enqueue(Item(sectorno: neighbor))
+        discard  
+        if sect.ceil > sectors[neighbor].ceil:
+          const wcol = (1.0f, 0.0f, 1.0f, 1.0f)
+          let nceil = sectors[neighbor].ceil
+          Triangulate(gls.batch3, [
+            TxVtxColor(pos: vec3(sect.vertex[s+0], nceil), tc: notc, color: wcol), 
+            TxVtxColor(pos: vec3(sect.vertex[s+0], sect.ceil), tc: notc, color: wcol), 
+            TxVtxColor(pos: vec3(sect.vertex[s+1], sect.ceil), tc: notc, color: wcol), 
+            TxVtxColor(pos: vec3(sect.vertex[s+1], nceil), tc: notc, color: wcol)])
+
+        let nfloor = sectors[neighbor].floor
+        if sect.floor < nfloor:
+          const wcol = glColor(BottomWallBaseColor) * 31.0f
+          Triangulate(gls.batch3, [
+            TxVtxColor(pos: vec3(sect.vertex[s+0], sect.floor), tc: notc, color: wcol), 
+            TxVtxColor(pos: vec3(sect.vertex[s+0], nfloor), tc: notc, color: wcol), 
+            TxVtxColor(pos: vec3(sect.vertex[s+1], nfloor), tc: notc, color: wcol), 
+            TxVtxColor(pos: vec3(sect.vertex[s+1], sect.floor), tc: notc, color: wcol)])
+
+      else:
+        # Wall on this edge
+        let f1 = vec3(sect.vertex[s+0], sect.floor)
+        let f2 = vec3(sect.vertex[s+1], sect.floor)
+        let c1 = vec3(sect.vertex[s+0], sect.ceil)
+        let c2 = vec3(sect.vertex[s+1], sect.ceil)
+        const wcol = glColor(WallBaseColor*255)
+        Triangulate(gls.batch3, [
+          TxVtxColor(pos: f1, tc: notc, color: wcol),
+          TxVtxColor(pos: c1, tc: notc, color: wcol),
+          TxVtxColor(pos: c2, tc: notc, color: wcol),
+          TxVtxColor(pos: f2, tc: notc, color: wcol)])
+        discard  
+
+    Triangulate(gls.batch3, floorVtx)
+    TriangulateRev(gls.batch3, ceilVtx)
+
   SubmitAndDraw(gls.batch3, gls.verts, gls.indices, GL_TRIANGLES)
-  #-DEBUGGERY
 
   # Write OpenGL in the bottom left of the screen.
   gls.uni.mvp = orthoProjectionYDown[float32](0.0f, WW.float32, 0.0f, WH.float32, -10.0f, 10.0f)
@@ -290,7 +369,8 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   Use(gls.shSolidColor)
   BindAndConfigureArray(gls.verts, VtxColorDesc)
   Clear(gls.batch2)
-  Text(gls.batch2, "OpenGL", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
+  glDisable(GL_DEPTH_TEST)
+  Text(gls.batch2, "OpenGL fov " & $FOV, (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
   SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
 
   SwapWindow(window)
@@ -584,6 +664,12 @@ proc RunLoop(gls: GLState) =
           falling = true
         of K_TAB:
           callDraw = callDraw or ev.kind == KeyDown
+        of K_PERIOD:
+          if ev.kind == KeyDown:
+            FOV += 5.0f
+        of K_COMMA:
+          if ev.kind == KeyDown:
+            FOV -= 5.0f
         of K_t:
           if ev.kind == KeyDown and drawMode == FullSpeed:
             # Clear screen before doing one sector at a time.
@@ -671,7 +757,11 @@ proc go() =
   vfont.Init()
 
   try:
-    LoadData()
+    var fn = "map-clear.txt"
+    if paramCount() > 0:
+      fn = paramStr(1)
+
+    LoadData(fn)
     RunLoop(gls)
     echo GC_getStatistics()
     zstats.PrintReport()

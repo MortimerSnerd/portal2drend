@@ -1040,10 +1040,10 @@ proc lookAt*[T](viewPt: V3X[T]; targetPt: V3X[T]; up: V3X[T]) : Matrix4x4X[T] =
     ## treating vectors as column vectors.  It's convenient for now, as 
     ## the current shaders do Mv rather than vM.  
     let
-        lookDir   = (targetPt - viewPt).normalized
+        lookDir   = (viewPt - targetPt).normalized
         upDir     = up.normalized
         rightDir  = cross(lookDir, upDir).normalized
-        perpUpDir = cross(rightDir, lookDir)
+        perpUpDir = cross(rightDir, lookDir).normalized
         rotMat    = Matrix4x4X[T]([rightDir.x,  perpUpDir.x, -lookDir.x,  T(0), 
                                    rightDir.y,  perpUpDir.y, -lookDir.y,  T(0), 
                                    rightDir.z,  perpUpDir.z, -lookDir.z,  T(0),
@@ -1064,6 +1064,18 @@ proc perspectiveProjection*[T](fov: T; zNear: T; zFar: T; aspectRatio: T) : Matr
     (result.M33) = (zFar + zNear) / ndist
     (result.M34) = (T(2) * zFar * zNear) / ndist
     (result.M43) = T(-1)
+
+proc perspectiveProjectionInf*[T](left, right, top, bottom, near, far: T) : Matrix4x4f = 
+  ## Perspective projection that allows point depths to be projected to 
+  ## infinity.  Same arguments that you'd give glFrustum().
+  template two : T = T(2)
+  (result.M11) = (two*near)/(right-left)
+  (result.M13) = (right+left)/(right-left)
+  (result.M22) = (two*near)/(top-bottom)
+  (result.M23) = (top+bottom)/(top-bottom)
+  (result.M33) = T(-1)
+  (result.M34) = -two * near
+  (result.M43) = T(-1)
 
 proc orthoProjection*[T](left, right, bottom, top, znear, zfar: T) : Matrix4x4X[T] = 
   ## Creates an orthographic projection.
