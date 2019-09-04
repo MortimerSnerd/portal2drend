@@ -275,9 +275,10 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   let rot = rotation3d((0.0f, 0.0f, 1.0f), player.angle + float32(PI)) * rotation3d((0.0f, -1.0f, 0.0f), yaw)
   let fwd = vec3(rot*(1.0f, 0.0f, 0.0f, 0.0f))
   let mv = lookAt(eye, eye + fwd, (0.0f, 0.0f, -1.0f))
-  let near = 1.0f / tan(FOV.degrees/2.0f)
-  let top = WW.float32 / WH.float32
-  let p = perspectiveProjectionInf(-1.0f, 1.0f, -top, top, near, 100.0f)
+  let npwidth = WH.float32 / WW.float32
+  let npheight = 2.0f
+  let near = 0.5f
+  let p = perspectiveProjectionInf(-npwidth/2.0f, npwidth/2.0f, -npheight/2.0f, npheight/2.0f, near, 500.0f)
 
   gls.uni.mvp = p * mv
   gls.uni.cameraWorldPos = vec4(eye, 1.0f)
@@ -325,7 +326,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
           enqueue(Item(sectorno: neighbor))
         discard  
         if sect.ceil > sectors[neighbor].ceil:
-          const wcol = (1.0f, 0.0f, 1.0f, 1.0f)
+          const wcol = glColor(WallBaseColor) * 255.0f
           let nceil = sectors[neighbor].ceil
           Triangulate(gls.batch3, [
             TxVtxColor(pos: vec3(sect.vertex[s+0], nceil), tc: notc, color: wcol), 
@@ -370,7 +371,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   BindAndConfigureArray(gls.verts, VtxColorDesc)
   Clear(gls.batch2)
   glDisable(GL_DEPTH_TEST)
-  Text(gls.batch2, "OpenGL fov " & $FOV, (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
+  Text(gls.batch2, &"OpenGL fov {FOV}", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
   SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
 
   SwapWindow(window)
