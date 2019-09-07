@@ -32,6 +32,8 @@ proc Init*() =
   ## Initializes the letters.  Should be called before any other module function.
   letter(UnknownChar, [1.int8, 6,  0, 7,  0, 9,  1, 10,  5, 10,  6, 9,  6, 6,  5, 5,  4, 5, 3, 4, 3, 2,  EndLine, 3, 0,  3, 1])
   letter('!', [1.int8, 0,  0, 7,  EndLine, 0, 9, 0, 10])
+  letter('(', [2.int8, 0,  0, 2,  0, 8, 2, 10])
+  letter(')', [1.int8, 0,  3, 2,  3, 8,  1, 10])
   letter(',', [1.int8, 9,  1, 10,  0, 11])
   letter('-', [1.int8, 5, 4, 5])
   letter('.', [0.int8, 9, 0, 10])
@@ -46,6 +48,7 @@ proc Init*() =
   letter('8', [0.int8, 1,  0, 4,  1, 5, 0, 6,  0, 9,  1, 10,  3, 10,  4, 9,  4, 6,  3, 5,  4, 4,  4, 1,  3, 0,  1, 0,  0, 1,  EndLine,  1, 5,  3, 5])
   letter('9', [4.int8, 10,  4, 1,  3, 0,  1, 0,  0, 1,  0, 4,  1, 5,  4, 5])
   letter(':', [0.int8, 2,  0, 3,  EndLine,  0, 7,  0, 8])
+  letter('=', [0.int8, 4,  4, 4,  EndLine,  0, 6,  4, 6])
   letter('?', [0.int8, 3,  0, 1,  1, 0,  3, 0,  4, 1,  4, 5,  3, 6,  3, 7,  EndLine,  3, 9, 3, 10])
   letter('A', [0.int8, 10,  0, 3,  3, 0,  6, 3,  6, 10,  EndLine,  0, 5,  6, 5])
   letter('B', [0.int8, 0,  0, 10,  5, 10,  6, 8,  6, 5,  5, 4,  6, 3,  6, 2,  4, 0,  0, 0,  EndLine, 0, 4,  5, 4])
