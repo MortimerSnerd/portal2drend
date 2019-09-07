@@ -270,14 +270,16 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
 
   # Reminder - world coordinates are XY is the ground plane, and Z+ is up.
   # We need to transform to camera coordinates of x+ right, y+ up, and z- fwd.
-  let eye = player.where
+  # This is modifying the near plane distance to get the FOV, and adjusting
+  # the near plane width to keep the correct aspect ratio for the window size.
+  let npwidth = WH.float32 / WW.float32
+  let near = (npwidth*0.5f) / tan(FOV.degrees*0.5f)
+  let npheight = 2.0f
   let yaw = player.yaw / 4.0f
   let rot = rotation3d((0.0f, 0.0f, 1.0f), player.angle + float32(PI)) * rotation3d((0.0f, -1.0f, 0.0f), yaw)
   let fwd = vec3(rot*(1.0f, 0.0f, 0.0f, 0.0f))
+  let eye = player.where - fwd*near
   let mv = lookAt(eye, eye + fwd, (0.0f, 0.0f, -1.0f))
-  let npwidth = WH.float32 / WW.float32
-  let npheight = 2.0f
-  let near = 0.5f
   let p = perspectiveProjectionInf(-npwidth/2.0f, npwidth/2.0f, -npheight/2.0f, npheight/2.0f, near, 500.0f)
 
   gls.uni.mvp = p * mv
@@ -371,7 +373,8 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   BindAndConfigureArray(gls.verts, VtxColorDesc)
   Clear(gls.batch2)
   glDisable(GL_DEPTH_TEST)
-  Text(gls.batch2, &"OpenGL fov {FOV}", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
+  Text(gls.batch2, &"OpenGL FOV {FOV:3.1f}, near {near:1.2f}", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
+  Text(gls.batch2, &"ang={player.angle:2.1f}, yaw={player.yaw:2.1f}, fwd={fwd}", (5.0f, WH.float32 - 2 * (LetterHtScaleX1 + 5)))
   SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
 
   SwapWindow(window)
@@ -667,10 +670,10 @@ proc RunLoop(gls: GLState) =
           callDraw = callDraw or ev.kind == KeyDown
         of K_PERIOD:
           if ev.kind == KeyDown:
-            FOV += 5.0f
+            FOV += 2.0f
         of K_COMMA:
           if ev.kind == KeyDown:
-            FOV -= 5.0f
+            FOV -= 2.0f
         of K_t:
           if ev.kind == KeyDown and drawMode == FullSpeed:
             # Clear screen before doing one sector at a time.
