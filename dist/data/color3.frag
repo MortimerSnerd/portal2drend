@@ -4,6 +4,6 @@ out vec4 outColor;
 
 void main()
 {
-   outColor = vtxColor * (1.2f - gl_FragCoord.z);
+   outColor = vtxColor * 2.0f*(1.2f - gl_FragCoord.z);
 }
 

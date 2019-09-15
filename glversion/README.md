@@ -40,3 +40,30 @@ I suspect you can do something like project along the end points of sector edges
 have neighbors, and do some rough tests that are cheap enough,  and
 are good enough so the failure mode is "sector is rendered even though it can't be seen", 
 vs. "forgot to render a visible sector, which will pop in suddenly later." 
+
+## Issues
+
+### Perspective projection differences
+
+Initially, when I added the simple `DrawScreenGL()` function, I thought I was really 
+screwing up the projection, perhaps with the aspect ratio, because everything looked 
+narrower, and the steps looked really tall.  And while I could mess around with the 
+parameters of the OpenGL version's projection to get them to look closer, it resulted in a 
+high FOV of 90 degrees, which gave some distortion around the screens edges. 
+
+Additionally, the distortion would be much worse when looking up and down, with a bad 
+fisheye effect at the bottom and top of the screen. 
+
+I had a hard time making sense of it till I took a step back and looked at the level 
+geometry for the steps.  While the steps look much wider than they are deep in the 
+original renderer, if you look at the sector data, they are actually 4x2.  So the narrower 
+render with the OpenGL renderer makes sense.  Interestingly enough, the step height is 
+2, but looks less than half that when compared to the depth of the stair, which is also 
+2, so there is some scaling that makes things look shorter in the original rendererer vs 
+the OpenGL rendering.
+
+The distortion looking up and down was partly the FOV, and partly having the scaling 
+differences along the up axis that magnified the effect when I had adjusted the 
+projection to give results closer to the original.
+
+
