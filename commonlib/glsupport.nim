@@ -668,6 +668,11 @@ type
       pos*: V2f
       color*: V4f
 
+    VtxColorNorm* = object
+      pos*: V3f
+      color*: V4f
+      norm*: V3f
+
 let
     VtxColorDesc* = @[VertexAttrib(index: PosAttrib, 
                                    numComponents: 2, 
@@ -680,6 +685,23 @@ let
                                    stride: sizeof(VtxColor).GLsizei, 
                                    initialOffset: 4*2)]
       ## Desc used to bind the attributes for arrays of VtxColor objects.
+
+    VtxColorNormDesc* = @[VertexAttrib(index: PosAttrib, 
+                                   numComponents: 3, 
+                                   kind: cGL_FLOAT, 
+                                   stride: sizeof(VtxColorNorm).GLsizei, 
+                                   initialOffset: 0), 
+                      VertexAttrib(index: ColorAttrib, 
+                                   numComponents: 4, 
+                                   kind: cGL_FLOAT, 
+                                   stride: sizeof(VtxColorNorm).GLsizei, 
+                                   initialOffset: 4*3), 
+                      VertexAttrib(index: NormalAttrib, 
+                                   numComponents: 3, 
+                                   kind: cGL_FLOAT, 
+                                   stride: sizeof(VtxColorNorm).GLsizei, 
+                                   initialOffset: 4*7)]
+      ## Desc used to bind the attributes for arrays of VtxColorNorm objects.
 
     TxVtxDesc* = @[VertexAttrib(index: PosAttrib, 
                                 numComponents: 3, 

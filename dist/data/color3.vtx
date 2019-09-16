@@ -1,11 +1,13 @@
 in vec3 position;
 in vec4 color;
+in vec3 normal;
 
 out vec4 vtxColor;
 
 void main()
 {
    gl_Position = mvp * vec4(position, 1);
-   vtxColor = color;
+   vec4 ldir = vec4(0.707f, 0.0f, 0.0f, 0.707f);
+   vtxColor = color * (0.1f + dot(vec3(ldir), normal));
 }
 

@@ -235,7 +235,7 @@ type
     uniblk: BufferObject
     verts, indices: BufferObject
     batch2: VertBatch[VtxColor,uint16]
-    batch3: VertBatch[TxVtxColor,uint16]
+    batch3: VertBatch[VtxColorNorm,uint16]
     shSolidColor, shSolidColor3: Program
 
 proc NewGLState(rs: var ResourceSet) : GLState = 
@@ -245,7 +245,7 @@ proc NewGLState(rs: var ResourceSet) : GLState =
                    verts: NewBufferObject(rs), 
                    indices: NewBufferObject(rs), 
                    batch2: NewVertBatch[VtxColor,uint16](), 
-                   batch3: NewVertBatch[TxVtxColor,uint16](),
+                   batch3: NewVertBatch[VtxColorNorm,uint16](),
                    shSolidColor: NewProgram(rs, 
                                             [NewShaderFromFile(rs, "color.vtx", GL_VERTEX_SHADER), 
                                              colorf]), 
@@ -261,7 +261,6 @@ proc NewGLState(rs: var ResourceSet) : GLState =
 var FOVy = 70.0f
 proc DrawScreenGL(gls: GLState; justOneSector: bool) = 
   template SubmitUniforms() : untyped = Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
-  const notc = (0.0f, 0.0f)
 
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
   glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
@@ -289,7 +288,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
 
   Use(gls.shSolidColor3)
   Clear(gls.batch3)
-  BindAndConfigureArray(gls.verts, TxVtxColorDesc)
+  BindAndConfigureArray(gls.verts, VtxColorNormDesc)
 
   # First pass - just render everything to see if we can get the basic rendering 
   # correct, without any complications from visibility testing.  Keep the general
@@ -301,7 +300,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
     # Begin whole-screen rendering from where the player is.
     enqueue(Item(sectorno: int32(player.sector), sx1: 0, sx2: WW-1))
 
-  var floorVtx, ceilVtx: seq[TxVtxColor]
+  var floorVtx, ceilVtx: seq[VtxColorNorm]
   while not queueEmpty():
     let now = dequeue()
 
@@ -314,14 +313,16 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
 
     let sect = sectors[now.sectorno].addr
     for s in 0..<int(sect.npoints):
-      add(floorVtx, TxVtxColor(pos: vec3(sect.vertex[s], sect.floor), 
-                               tc: (0.0f, 0.0f), 
-                               color: glColor(FloorColor)))
-      add(ceilVtx, TxVtxColor(pos: vec3(sect.vertex[s], sect.ceil), 
-                               tc: (0.0f, 0.0f), 
-                               color: glColor(CeilingColor)))
+      add(floorVtx, VtxColorNorm(pos: vec3(sect.vertex[s], sect.floor), 
+                                 color: glColor(FloorColor), 
+                                 norm: (0.0f, 0.0f, 1.0f)))
+      add(ceilVtx, VtxColorNorm(pos: vec3(sect.vertex[s], sect.ceil), 
+                                color: glColor(CeilingColor), 
+                                norm: (0.0f, 0.0f, -1.0f)))
 
       let neighbor = sect.neighbors[s]
+      let ldir = normalized(sect.vertex[s+1] - sect.vertex[s+0])
+      let nn = vec3(ldir.y, ldir.x, 0.0f)
 
       if neighbor >= 0:
         # Neighboring sector.
@@ -331,20 +332,22 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
         if sect.ceil > sectors[neighbor].ceil:
           const wcol = glColor(WallBaseColor) * 255.0f
           let nceil = sectors[neighbor].ceil
+          let ldir = normalized(sect.vertex[s+1] - sect.vertex[s+0])
+          let nn = vec3(ldir.y, ldir.x, 0.0f)
           Triangulate(gls.batch3, [
-            TxVtxColor(pos: vec3(sect.vertex[s+0], nceil), tc: notc, color: wcol), 
-            TxVtxColor(pos: vec3(sect.vertex[s+0], sect.ceil), tc: notc, color: wcol), 
-            TxVtxColor(pos: vec3(sect.vertex[s+1], sect.ceil), tc: notc, color: wcol), 
-            TxVtxColor(pos: vec3(sect.vertex[s+1], nceil), tc: notc, color: wcol)])
+            VtxColorNorm(pos: vec3(sect.vertex[s+0], nceil), color: wcol, norm: nn), 
+            VtxColorNorm(pos: vec3(sect.vertex[s+0], sect.ceil), color: wcol, norm: nn), 
+            VtxColorNorm(pos: vec3(sect.vertex[s+1], sect.ceil), color: wcol, norm: nn), 
+            VtxColorNorm(pos: vec3(sect.vertex[s+1], nceil), color: wcol, norm: nn)])
 
         let nfloor = sectors[neighbor].floor
         if sect.floor < nfloor:
           const wcol = glColor(BottomWallBaseColor) * 31.0f
           Triangulate(gls.batch3, [
-            TxVtxColor(pos: vec3(sect.vertex[s+0], sect.floor), tc: notc, color: wcol), 
-            TxVtxColor(pos: vec3(sect.vertex[s+0], nfloor), tc: notc, color: wcol), 
-            TxVtxColor(pos: vec3(sect.vertex[s+1], nfloor), tc: notc, color: wcol), 
-            TxVtxColor(pos: vec3(sect.vertex[s+1], sect.floor), tc: notc, color: wcol)])
+            VtxColorNorm(pos: vec3(sect.vertex[s+0], sect.floor), color: wcol, norm: nn), 
+            VtxColorNorm(pos: vec3(sect.vertex[s+0], nfloor), color: wcol, norm: nn), 
+            VtxColorNorm(pos: vec3(sect.vertex[s+1], nfloor), color: wcol, norm: nn), 
+            VtxColorNorm(pos: vec3(sect.vertex[s+1], sect.floor), color: wcol, norm: nn)])
 
       else:
         # Wall on this edge
@@ -354,10 +357,10 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
         let c2 = vec3(sect.vertex[s+1], sect.ceil)
         const wcol = glColor(WallBaseColor*255)
         Triangulate(gls.batch3, [
-          TxVtxColor(pos: f1, tc: notc, color: wcol),
-          TxVtxColor(pos: c1, tc: notc, color: wcol),
-          TxVtxColor(pos: c2, tc: notc, color: wcol),
-          TxVtxColor(pos: f2, tc: notc, color: wcol)])
+          VtxColorNorm(pos: f1, color: wcol, norm: nn),
+          VtxColorNorm(pos: c1, color: wcol, norm: nn),
+          VtxColorNorm(pos: c2, color: wcol, norm: nn),
+          VtxColorNorm(pos: f2, color: wcol, norm: nn)])
         discard  
 
     Triangulate(gls.batch3, floorVtx)
