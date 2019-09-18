@@ -1,10 +1,10 @@
 import 
-  geom, glsupport, math, opengl, os, parseutils, sdl2, sdl2/image, 
+  collections/deques, geom, glsupport, math, opengl, os, parseutils, sdl2, sdl2/image, 
   random, strformat, zstats, verts, vfont
 
 const
-  WW = int32(608)
-  WH = int32(480)
+  WW = int32(1024)
+  WH = int32(780)
   EyeHeight = 6.0f
   DuckHeight = 2.5f
   HeadMargin = 1
@@ -226,6 +226,7 @@ template queueEmpty() : bool = DrawQ.head == DrawQ.tail
 
 var ytop, ybottom: array[WW,int32]
 var renderedsectors: seq[int32] 
+var todraw: seq[uint16]
   ## Vars persisted over multiple calls to DrawScreen when
   ## drawing one sector at a time.
 
@@ -258,7 +259,19 @@ proc NewGLState(rs: var ResourceSet) : GLState =
   glDepthFunc(GL_LESS)
 
 
+type 
+  SectorViz = object
+    ## Record that's queued for visibility testing a sector.
+    sector: uint16 ## Sector to consider for visibility
+    lp, rp: V2f 
+      ## points in clockwise order than define a field of view starting from
+      ## the viewer's current position. A point is in the FOV if it is to the right
+      ## of VP -> lp and to the left of VP -> rp
+
 var FOVy = 70.0f
+var glvizq = initDeque[SectorViz](64)
+  ## Queue of sectors that need to be tested for visibility.
+
 proc DrawScreenGL(gls: GLState; justOneSector: bool) = 
   template SubmitUniforms() : untyped = Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
 
@@ -281,6 +294,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   let eye = player.where
   let mv = lookAt(eye, eye + fwd, (0.0f, 0.0f, -1.0f))
   let p = perspectiveProjectionInf(-nphwidth, nphwidth, -nphheight, nphheight, near, 500.0f)
+  let where2 = vec2(player.where)
 
   gls.uni.mvp = p * mv
   gls.uni.cameraWorldPos = vec4(eye, 1.0f)
@@ -294,24 +308,67 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   # correct, without any complications from visibility testing.  Keep the general
   # order of rendering so it tends to go from near to far. Not attempting to make
   # the lines that show where the sector and wall edges are.
-  if queueEmpty():
+  if len(glvizq) == 0:
     setLen(renderedsectors, len(sectors))
+    setLen(todraw, 0)
     zeroMem(renderedsectors[0].addr, sizeof(renderedsectors[0]) * len(renderedsectors))
-    # Begin whole-screen rendering from where the player is.
-    enqueue(Item(sectorno: int32(player.sector), sx1: 0, sx2: WW-1))
+    # Begin whole-screen rendering from where the player is, with
+    # the player's FOV.
+    let ha = FOVy * 0.5f
+    let fwd2 = normalized(vec2(rot*vec4(fwd, 0.0f)))
+    addLast(glvizq, SectorViz(sector: player.sector, 
+                              lp: rotateAroundOrigin(fwd2, -ha),
+                              rp: rotateAroundOrigin(fwd2, ha)))
 
+  # Populate `todraw` by walking through the sectors that are visible, using
+  # and propagating the FOV triangle to only walk to sectors that could be visible.
+  while len(glvizq) > 0:
+    let sv = popFirst(glvizq)
+
+    # Only add to draw list once.  Even once a sector is marked to 
+    # be rendered, we still may need to revisit it later with a different
+    # FOV that may open the path to yet unvisited neighbors.
+    if renderedsectors[sv.sector] == 0:
+      add(todraw, sv.sector)
+      renderedsectors[sv.sector] = 1
+
+    let sect = sectors[sv.sector].addr
+    for s in 0..<int(sect.npoints):
+      let neighbor = sect.neighbors[s]
+
+      if neighbor >= 0:
+        # A sector edge we can see through.
+        let sline = (start: sect.vertex[s+0], extent: sect.vertex[s+1] - sect.vertex[s+0])
+        var fvl, fvr: Line2X[float32]
+
+        # We have to look at what side of the sector line we are on 
+        # to order the FOV lines consistently.
+        if where2.rightOf(sline):
+          fvl = (start: where2, extent: sect.vertex[s+0] - where2)
+          fvr = (start: where2, extent: sect.vertex[s+1] - where2)
+        else:
+          fvl = (start: where2, extent: sect.vertex[s+1] - where2)
+          fvr = (start: where2, extent: sect.vertex[s+0] - where2)
+
+        let ir1 = calcParametricLineIntersection(fvl, sline)
+        let ir2 = calcParametricLineIntersection(fvr, sline)
+
+        if ir1.found and ir1.s2 < ir2.s2 and ir1.s2 <= 1.0f and ir2.s2 >= 0.0f:
+          # The sector line is in our FOV, so propagate the FOV
+          # through to the neighboring sector.
+          let thruPL = sline.start + sline.extent * clamp(ir1.s2)
+          let thruPR = sline.start + sline.extent * clamp(ir2.s2)
+
+          addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: thruPL, rp: thruPR))
+
+  # All visible sectors have been recorded, in a rough closest to the player to furthest order.
+  # Now just render them.
   var floorVtx, ceilVtx: seq[VtxColorNorm]
-  while not queueEmpty():
-    let now = dequeue()
-
-    if renderedsectors[now.sectorno] != 0: 
-      continue
-
-    renderedsectors[now.sectorno] += 1
+  for sn in todraw:
     setLen(floorVtx, 0)
     setLen(ceilVtx, 0)
 
-    let sect = sectors[now.sectorno].addr
+    let sect = sectors[sn].addr
     for s in 0..<int(sect.npoints):
       add(floorVtx, VtxColorNorm(pos: vec3(sect.vertex[s], sect.floor), 
                                  color: glColor(FloorColor), 

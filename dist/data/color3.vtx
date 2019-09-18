@@ -7,7 +7,7 @@ out vec4 vtxColor;
 void main()
 {
    gl_Position = mvp * vec4(position, 1);
-   vec4 ldir = vec4(0.577f, -0.577f, 0.577f, 0.0f);
-   vtxColor = color * (0.1f + dot(vec3(ldir), normal));
+   vec4 ldir = vec4(0.577f, 0.577f, 0.577f, 0.0f);
+   vtxColor = color; // * (0.4f + dot(vec3(ldir), normal));
 }
 

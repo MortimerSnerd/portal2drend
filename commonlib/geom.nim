@@ -92,6 +92,12 @@ proc vec2*[T](x, y: T) : V2X[T] =
   ## V2X[int]
   (x: x, y: y)
 
+template vec2*[T](p: V3X[T]) : V2X[T] = (x: p.x, y: p.y)
+  ## Truncate vec3 to vec2 by dropping `z`.
+
+template vec2*[T](p: V4X[T]) : V2X[T] = (x: p.x, y: p.y)
+  ## Truncate vec4 to vec2 by dropping `z` and `w`.
+
 proc vec4*[T](v: V3X[T]; w: T) : V4X[T] =
     (v.x, v.y, v.z, w)
 
