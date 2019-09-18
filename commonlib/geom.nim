@@ -1046,7 +1046,7 @@ proc lookAt*[T](viewPt: V3X[T]; targetPt: V3X[T]; up: V3X[T]) : Matrix4x4X[T] =
     ## treating vectors as column vectors.  It's convenient for now, as 
     ## the current shaders do Mv rather than vM.  
     let
-        lookDir   = (viewPt - targetPt).normalized
+        lookDir   = (targetPt - viewPt).normalized
         upDir     = up.normalized
         rightDir  = cross(lookDir, upDir).normalized
         perpUpDir = cross(rightDir, lookDir).normalized
