@@ -1,7 +1,7 @@
 ## Simple vector font used for debugging without having to haul
 ## around a font texture.
 import 
-  comalg, geom, glsupport, opengl, strformat, strutils, verts
+  comalg, geom, glsupport, strformat, strutils, verts
 
 const
   EndLine = int8.low
@@ -131,7 +131,7 @@ proc Text*(batch: VertBatch[VtxColor,uint16]; msg: string; topLeft: V2f; scale: 
   result = (pos.x, LetterHtScaleX1 * scale)
 
 when isMainModule:
-  import sdl2, zstats
+  import opengl, sdl2, zstats
   proc go() = 
     const 
       WW = 1024

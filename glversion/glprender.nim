@@ -259,6 +259,49 @@ proc NewGLState(rs: var ResourceSet) : GLState =
   glDepthFunc(GL_LESS)
 
 
+proc DebugDrawSectors(gls: GLState; fovl, fovr: V2f) = 
+  ## Renders overhead view of sector lines.  Assumes the `todraw`
+  ## seq has already been filled out with the visible sectors.
+  const scale = 10.0f
+
+  var centroids: seq[V2f]
+  setLen(centroids, len(sectors))
+  Clear(gls.batch2)
+
+  # Render the lines of all the sectors if they are close to the Z level the player is on.
+  for sn in 0..<len(sectors):
+    var draw = (player.where.z - EyeHeight).almost(sectors[sn].floor, 1.0f)
+
+    for i in 0..<int(sectors[sn].npoints):
+      let col = if sectors[sn].neighbors[i] < 0: BlueG else: BlackG
+      let p0 = sectors[sn].vertex[i] * scale
+      centroids[sn] += p0
+      if draw:
+        AddLine(gls.batch2, VtxColor(pos: p0, color: col), VtxColor(pos: sectors[sn].vertex[i+1] * scale, color: col))
+    centroids[sn] = centroids[sn] / float32(sectors[sn].npoints)
+
+  # Add a sector number for the sectors visible from the player.
+  for sn in todraw:
+    Text(gls.batch2, $sn, centroids[sn], 1.0f, BlackG)
+
+  # X marks the player.
+  let pp = vec2(player.where) * scale
+  AddLine(gls.batch2, VtxColor(pos: pp - (5.0f, 5.0f), color: RedG), VtxColor(pos: pp + (5.0f, 5.0f), color: RedG))
+  AddLine(gls.batch2, VtxColor(pos: pp - (-5.0f, 5.0f), color: RedG), VtxColor(pos: pp + (-5.0f, 5.0f), color: RedG))
+
+  # And lines for FOV.
+  AddLine(gls.batch2, VtxColor(pos: pp, color: RedG), VtxColor(pos: fovl*scale, color: RedG))
+  AddLine(gls.batch2, VtxColor(pos: pp, color: RedG), VtxColor(pos: fovr*scale, color: RedG))
+
+  gls.uni.mvp = orthoProjectionYDown[float32](0.0f, WW.float32, 0.0f, WH.float32, -10.0f, 10.0f)
+  gls.uni.tint = WhiteG
+  Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
+
+
+  BindAndConfigureArray(gls.verts, VtxColorDesc)
+  glDisable(GL_DEPTH_TEST)
+  SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
+
 type 
   SectorViz = object
     ## Record that's queued for visibility testing a sector.
@@ -308,17 +351,21 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   # correct, without any complications from visibility testing.  Keep the general
   # order of rendering so it tends to go from near to far. Not attempting to make
   # the lines that show where the sector and wall edges are.
+  var pfovl, pfovr: V2f
   if len(glvizq) == 0:
     setLen(renderedsectors, len(sectors))
     setLen(todraw, 0)
     zeroMem(renderedsectors[0].addr, sizeof(renderedsectors[0]) * len(renderedsectors))
     # Begin whole-screen rendering from where the player is, with
     # the player's FOV.
-    let ha = FOVy * 0.5f
-    let fwd2 = normalized(vec2(rot*vec4(fwd, 0.0f)))
+    let ha = FOVy.degrees * 0.5f
+    let fwd2 = normalized(vec2(fwd))
+
+    pfovl = rotateAroundOrigin(fwd2, -ha)
+    pfovr = rotateAroundOrigin(fwd2, ha)
     addLast(glvizq, SectorViz(sector: player.sector, 
-                              lp: rotateAroundOrigin(fwd2, -ha),
-                              rp: rotateAroundOrigin(fwd2, ha)))
+                              lp: pfovl,
+                              rp: pfovr))
 
   # Populate `todraw` by walking through the sectors that are visible, using
   # and propagating the FOV triangle to only walk to sectors that could be visible.
@@ -339,27 +386,23 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
       if neighbor >= 0:
         # A sector edge we can see through.
         let sline = (start: sect.vertex[s+0], extent: sect.vertex[s+1] - sect.vertex[s+0])
-        var fvl, fvr: Line2X[float32]
 
-        # We have to look at what side of the sector line we are on 
-        # to order the FOV lines consistently.
+        # The 'inside' of the sector line is facing the player, so 
+        # this sector boundary leads away from the player.  We don't
+        # want to follow sector boundaries that move back towards the player.
         if where2.rightOf(sline):
-          fvl = (start: where2, extent: sect.vertex[s+0] - where2)
-          fvr = (start: where2, extent: sect.vertex[s+1] - where2)
-        else:
-          fvl = (start: where2, extent: sect.vertex[s+1] - where2)
-          fvr = (start: where2, extent: sect.vertex[s+0] - where2)
+          let fvl = (start: where2, extent: sect.vertex[s+0] - where2)
+          let fvr = (start: where2, extent: sect.vertex[s+1] - where2)
+          let ir1 = calcParametricLineIntersection(fvl, sline)
+          let ir2 = calcParametricLineIntersection(fvr, sline)
 
-        let ir1 = calcParametricLineIntersection(fvl, sline)
-        let ir2 = calcParametricLineIntersection(fvr, sline)
+          if ir1.found and ir1.s2 < ir2.s2 and ir1.s2 <= 1.0f and ir2.s2 >= 0.0f and (ir1.s1 >= 0.0f or ir1.s1 >= 0.0f):
+            # The sector line is in our FOV, so propagate the FOV
+            # through to the neighboring sector.
+            let thruPL = sline.start + sline.extent * clamp(ir1.s2)
+            let thruPR = sline.start + sline.extent * clamp(ir2.s2)
 
-        if ir1.found and ir1.s2 < ir2.s2 and ir1.s2 <= 1.0f and ir2.s2 >= 0.0f:
-          # The sector line is in our FOV, so propagate the FOV
-          # through to the neighboring sector.
-          let thruPL = sline.start + sline.extent * clamp(ir1.s2)
-          let thruPR = sline.start + sline.extent * clamp(ir2.s2)
-
-          addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: thruPL, rp: thruPR))
+            addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: thruPL, rp: thruPR))
 
   # All visible sectors have been recorded, in a rough closest to the player to furthest order.
   # Now just render them.
@@ -437,7 +480,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   Text(gls.batch2, &"OpenGL FOVy {FOVy:3.1f}, near {near:1.2f}", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
   Text(gls.batch2, &"ang={player.angle:2.1f}, yaw={player.yaw:2.1f}, fwd={fwd}", (5.0f, WH.float32 - 2 * (LetterHtScaleX1 + 5)))
   SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
-
+  DebugDrawSectors(gls, pfovl*10.0f + vec2(player.where), pfovr*10.0f + vec2(player.where))
   SwapWindow(window)
 
 {.push overflowChecks: off.}
