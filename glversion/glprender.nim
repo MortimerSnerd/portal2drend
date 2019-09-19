@@ -417,10 +417,8 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
               let thruPL = sline.start + sline.extent * clamp(ir_l.s2)
               let thruPR = sline.start + sline.extent * clamp(ir_r.s2)
 
-              echo &"sector {sv.sector} line {s} ls={ir_l}, rs={ir_r}"
               add(thrus, thruPL)
               add(thrus, thruPR)
-
               addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: thruPL, rp: thruPR))
 
   # All visible sectors have been recorded, in a rough closest to the player to furthest order.
