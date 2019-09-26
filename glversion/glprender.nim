@@ -52,12 +52,12 @@ type
   DrawModes = enum
     FullSpeed, SectorAtATime
 
-var NumSectors : Natural
 var surface: SurfacePtr
 var window: WindowPtr
 var sectors: seq[Sector]
 var player: Player
 var drawMode = FullSpeed
+var maxSectorExtent: V2f
 
 template clamp(a, mi, ma: untyped) : untyped = min(max(a, mi), ma)
 template vxs(x0, y0, x1, y1: untyped) : untyped = x0*y1 - x1*y0
@@ -145,6 +145,8 @@ proc LoadData(fn: string) =
             if parsedFloat(line, ix, fy):
               while parsedFloat(line, ix, fx):
                 add(verts, (x: fx, y: fy))
+                maxSectorExtent.x = max(maxSectorExtent.x, fx)
+                maxSectorExtent.y = max(maxSectorExtent.y, fy)
                 ix += skipWhitespace(line, ix)
 
           elif ident == "sector":
@@ -262,12 +264,29 @@ proc NewGLState(rs: var ResourceSet) : GLState =
 proc DebugDrawSectors(gls: GLState; fovl, fovr: V2f; fovipts: seq[V2f]) = 
   ## Renders overhead view of sector lines.  Assumes the `todraw`
   ## seq has already been filled out with the visible sectors.
-  const scale = 10.0f
-  const mid = (0.5f, 1.0f, 0.5f, 1.0f)
+  const dbgDims = (x:float32(WW)/2.0f, y:float32(WH)/2.0f*float32(WH)/float32(WW))
+  let scalex = dbgDims.x / maxSectorExtent.x 
+  let scaley = dbgDims.y / maxSectorExtent.y
+  template scalep(a: V2f) : V2f = (a.x * scalex, a.y * scaley)
+  const mid = (1.0f, 1.0f, 1.0f, 1.0f)
+  let bgcolor = BlackG
 
   var centroids: seq[V2f]
   setLen(centroids, len(sectors))
   Clear(gls.batch2)
+
+  gls.uni.mvp = orthoProjectionYDown[float32](0.0f, WW.float32, 0.0f, WH.float32, -10.0f, 10.0f)
+  gls.uni.tint = WhiteG
+  Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
+  BindAndConfigureArray(gls.verts, VtxColorDesc)
+  glDisable(GL_DEPTH_TEST)
+
+  # Clear background of debug drawing.
+  Triangulate(gls.batch2, [VtxColor(pos: (0.0f, 0.0f), color: bgcolor), 
+                           VtxColor(pos: (dbgDims.x, 0.0f), color: bgcolor), 
+                           VtxColor(pos: dbgDims, color: bgcolor), 
+                           VtxColor(pos: (0.0f, dbgDims.y), color: bgcolor)])
+  SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_TRIANGLES)
 
   # Render the lines of all the sectors if they are close to the Z level the player is on.
   for sn in 0..<len(sectors):
@@ -275,37 +294,30 @@ proc DebugDrawSectors(gls: GLState; fovl, fovr: V2f; fovipts: seq[V2f]) =
 
     for i in 0..<int(sectors[sn].npoints):
       let col = if sectors[sn].neighbors[i] < 0: BlueG else: mid
-      let p0 = sectors[sn].vertex[i] * scale
+      let p0 = scalep(sectors[sn].vertex[i])
       centroids[sn] += p0
       if draw:
-        AddLine(gls.batch2, VtxColor(pos: p0, color: col), VtxColor(pos: sectors[sn].vertex[i+1] * scale, color: col))
+        AddLine(gls.batch2, VtxColor(pos: p0, color: col), VtxColor(pos: scalep(sectors[sn].vertex[i+1]), color: col))
     centroids[sn] = centroids[sn] / float32(sectors[sn].npoints)
 
   # Add a sector number for the sectors visible from the player.
   for sn in todraw:
-    Text(gls.batch2, $sn, centroids[sn], 1.0f, mid)
+    Text(gls.batch2, $sn, centroids[sn], scalex / 10.0f, mid)
 
   # X marks the player.
-  let pp = vec2(player.where) * scale
-  AddLine(gls.batch2, VtxColor(pos: pp - (5.0f, 5.0f), color: RedG), VtxColor(pos: pp + (5.0f, 5.0f), color: RedG))
-  AddLine(gls.batch2, VtxColor(pos: pp - (-5.0f, 5.0f), color: RedG), VtxColor(pos: pp + (-5.0f, 5.0f), color: RedG))
+  let pp = scalep(vec2(player.where))
+  AddLine(gls.batch2, VtxColor(pos: pp - (5.0f, 5.0f), color: BlueG), VtxColor(pos: pp + (5.0f, 5.0f), color: BlueG))
+  AddLine(gls.batch2, VtxColor(pos: pp - (-5.0f, 5.0f), color: BlueG), VtxColor(pos: pp + (-5.0f, 5.0f), color: BlueG))
 
   # And lines for FOV.
-  AddLine(gls.batch2, VtxColor(pos: pp, color: RedG), VtxColor(pos: fovl*scale, color: RedG))
-  AddLine(gls.batch2, VtxColor(pos: pp, color: RedG), VtxColor(pos: fovr*scale, color: RedG))
+  AddLine(gls.batch2, VtxColor(pos: pp, color: BlueG), VtxColor(pos: scalep(fovl), color: BlueG))
+  AddLine(gls.batch2, VtxColor(pos: pp, color: BlueG), VtxColor(pos: scalep(fovr), color: BlueG))
 
   # Add ticks for all of the intersect points of the FOV with the sector lines.
   for tp in fovipts:
     let dir = normalized(tp - vec2(player.where))
-    AddLine(gls.batch2, VtxColor(pos: tp*scale, color: mid), VtxColor(pos: tp*scale - dir*5.0f, color: mid))
+    AddLine(gls.batch2, VtxColor(pos: scalep(tp), color: mid), VtxColor(pos: scalep(tp) - dir*10.0f, color: mid))
 
-  gls.uni.mvp = orthoProjectionYDown[float32](0.0f, WW.float32, 0.0f, WH.float32, -10.0f, 10.0f)
-  gls.uni.tint = WhiteG
-  Populate(gls.uniblk, GL_UNIFORM_BUFFER, gls.uni.addr, GL_DYNAMIC_DRAW)
-
-
-  BindAndConfigureArray(gls.verts, VtxColorDesc)
-  glDisable(GL_DEPTH_TEST)
   SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
 
 type 
@@ -317,7 +329,7 @@ type
       ## the viewer's current position. A point is in the FOV if it is to the right
       ## of VP -> lp and to the left of VP -> rp
 
-var FOVy = 70.0f
+var FOVx = 70.0f
 var glvizq = initDeque[SectorViz](64)
   ## Queue of sectors that need to be tested for visibility.
 
@@ -338,9 +350,9 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   # This is modifying the near plane distance to get the FOV, and adjusting
   # the near plane width to keep the correct aspect ratio for the window size.
   let near = 1.0f
-  let fvt = tan(FOVy.degrees/2)
-  let nphwidth = fvt * (WW.float32/WH.float32) * near
-  let nphheight = fvt * near
+  let fvt = tan(FOVx.degrees/2)
+  let nphwidth = fvt * near
+  let nphheight = fvt * (WH.float32/WW.float32) * near
   let yaw = player.yaw / 4.0f
   let rot = rotation3d((0.0f, 0.0f, 1.0f), player.angle) * rotation3d((0.0f, 1.0f, 0.0f), yaw)
   let fwd = vec3(rot*(1.0f, 0.0f, 0.0f, 0.0f))
@@ -368,9 +380,9 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
     setLen(todraw, 0)
     zeroMem(renderedsectors[0].addr, sizeof(renderedsectors[0]) * len(renderedsectors))
     # Begin whole-screen rendering from where the player is, with
-    # the player's FOV.
-    let FOVx = FOVy.degrees * WW.float32 / WH.float32
-    let ha = FOVx * 0.5f
+    # the player's FOV. Widen a bit to avoid errors at the extreme
+    # edges that could a sector to be onscreen at the edge, but not drawn.
+    let ha = FOVx.degrees * 0.5f + 4.0f * float32(abs(player.yaw.degrees))
     let fwd2 = normalized(vec2(fwd))
 
     pfovl = rotateAroundOrigin(fwd2, -ha)
@@ -397,29 +409,63 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
 
       if neighbor >= 0:
         # A sector edge we can see through.
-        let sline = (start: sect.vertex[s+0], extent: sect.vertex[s+1] - sect.vertex[s+0])
+        let sedge = (start: sect.vertex[s+0], extent: sect.vertex[s+1] - sect.vertex[s+0])
 
         # The 'inside' of the sector line is facing the player, so 
         # this sector boundary leads away from the player.  We don't
         # want to follow sector boundaries that move back towards the player.
-        if where2.rightOf(sline):
+        # We depend on the fact that sector edges are in CW order.
+        if where2.rightOf(sedge):
           let fvl = (start: where2, extent: sv.lp - where2)
           let fvr = (start: where2, extent: sv.rp - where2)
-          let ir_l = calcParametricLineIntersection(fvl, sline)
-          let ir_r = calcParametricLineIntersection(fvr, sline)
+          var ir_l = calcParametricLineIntersection(fvl, sedge)
+          var ir_r = calcParametricLineIntersection(fvr, sedge)
 
-          # Reject intersections that are completely behind the player.
-          if ir_l.found and not (ir_l.s1 < 0.0f and ir_r.s1 < 0.0f):
-            # Reject if both FOV lines are outside the extent of sline on the same side.
-            if not (ir_l.s2 < 0.0f and ir_r.s2 < 0.0f) and not (ir_l.s2 > 1.0f and ir_r.s2 > 1.0):
-              # The sector line is in our FOV, so propagate the FOV
-              # through to the neighboring sector.
-              let thruPL = sline.start + sline.extent * clamp(ir_l.s2)
-              let thruPR = sline.start + sline.extent * clamp(ir_r.s2)
+          template infov(p: V2f) : bool = classify(fvl, p) in [rpPositive, rpCoincident] and classify(fvr, p) in [rpNegative, rpCoincident] 
 
-              add(thrus, thruPL)
-              add(thrus, thruPR)
-              addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: thruPL, rp: thruPR))
+
+          if ir_l.s1 < 0 and ir_r.s1 < 0:
+            # The edge is completely behind us.
+            discard
+          elif not ir_l.found and ir_r.s1 >= 0:
+            # Parallel to left FOV edge, with a endpoint in front.
+            let endS = clamp(ir_r.s2)
+            let sep = sedge.start + sedge.extent * endS
+            if not sedge.start.almost(sep):
+              add(thrus, sedge.start)
+              add(thrus, sep)
+              addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: sedge.start, rp: sep))
+          elif not ir_r.found and ir_l.s1 >= 0:
+            # Parallel to right FOV edge, and start is in front of FOV.
+            let startS = clamp(ir_l.s2)
+            let stp = sedge.start + sedge.extent * startS
+            if not stp.almost(sedge.endPoint):
+              add(thrus, stp)
+              add(thrus, sedge.endPoint)
+              addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: stp, rp: sedge.endPoint))
+          elif ir_l.s1 < 0:
+            # Endpoint behind us.
+            let ep = sedge.start + sedge.extent * clamp(ir_r.s2)
+            if not sedge.start.almost(ep):
+              add(thrus, sedge.start)
+              add(thrus, ep)
+              addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: sedge.start, rp: ep))
+          elif ir_r.s1 < 0:
+            # Start behind us.
+            let ep = sedge.endPoint
+            let sp = sedge.start + sedge.extent * clamp(ir_l.s2)
+            if not ep.almost(sp):
+              add(thrus, sp)
+              add(thrus, ep)
+              addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: sp, rp: ep))
+          else:
+            # No special case, just clamp the collision points to the sector edge.
+            let sp = sedge.start + sedge.extent * clamp(ir_l.s2)
+            let ep = sedge.start + sedge.extent * clamp(ir_r.s2)
+            if not sp.almost(ep):
+              add(thrus, sp)
+              add(thrus, ep)
+              addLast(glvizq, SectorViz(sector: uint16(neighbor), lp: sp, rp: ep))
 
   # All visible sectors have been recorded, in a rough closest to the player to furthest order.
   # Now just render them.
@@ -494,7 +540,7 @@ proc DrawScreenGL(gls: GLState; justOneSector: bool) =
   BindAndConfigureArray(gls.verts, VtxColorDesc)
   Clear(gls.batch2)
   glDisable(GL_DEPTH_TEST)
-  Text(gls.batch2, &"OpenGL FOVy {FOVy:3.1f}, near {near:1.2f}", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
+  Text(gls.batch2, &"OpenGL FOVx {FOVx:3.1f}, near {near:1.2f}", (5.0f, WH.float32 - LetterHtScaleX1 - 5.0f), 1.0f, WhiteG)
   Text(gls.batch2, &"ang={player.angle:2.1f}, yaw={player.yaw:2.1f}, fwd={fwd}", (5.0f, WH.float32 - 2 * (LetterHtScaleX1 + 5)))
   SubmitAndDraw(gls.batch2, gls.verts, gls.indices, GL_LINES)
   DebugDrawSectors(gls, pfovl*10.0f + vec2(player.where), pfovr*10.0f + vec2(player.where), thrus)
@@ -791,10 +837,10 @@ proc RunLoop(gls: GLState) =
           callDraw = callDraw or ev.kind == KeyDown
         of K_PERIOD:
           if ev.kind == KeyDown:
-            FOVy += 2.0f
+            FOVx += 2.0f
         of K_COMMA:
           if ev.kind == KeyDown:
-            FOVy -= 2.0f
+            FOVx -= 2.0f
         of K_t:
           if ev.kind == KeyDown and drawMode == FullSpeed:
             # Clear screen before doing one sector at a time.
